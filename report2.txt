@@ -1,0 +1,36 @@
+Theoretical Background
+
+A single RGB image shows the appearance of a scene. It does not directly show the real distance of each object. For this reason, depth must be estimated before a 3D point cloud can be built. Monocular depth estimation tries to predict the distance of each pixel from one image. This approach is useful for low-cost robotic systems because a single camera is light, cheap, and easy to install. However, the task is difficult because one image does not contain full 3D information.
+
+There is an important difference between relative depth and metric depth. Relative depth mainly describes which parts of the scene are closer and which parts are farther away. Metric depth tries to match real physical distance. For this project, relative depth alone is not enough. The depth result must be converted into a point cloud and used by later modules. Because of this, scale consistency is important. If the scale is wrong, the point cloud may look reasonable, but the measured distance and object position may still be inaccurate.
+
+The geometric basis of point cloud reconstruction is the pinhole camera model. A camera projects 3D points in the scene onto a 2D image plane. If the depth value of a pixel is known, that pixel can be projected back into 3D space. This process is called back-projection. The main camera parameters are the focal lengths and the principal point. These values are usually written as fx, fy, cx, and cy. For a pixel at image position (u, v) with depth Z, the 3D point can be written as X = (u - cx)Z / fx, Y = (v - cy)Z / fy, and Z = Z. This relation explains why a depth map can be converted into a point cloud.
+
+Camera calibration is also important. The ideal pinhole model assumes perfect imaging geometry. Real cameras do not behave exactly like this. Lens distortion can bend image lines and shift pixel positions. If the intrinsic parameters are inaccurate, the reconstructed 3D points will also be inaccurate. Because of this, calibration and undistortion help improve geometric consistency between the image and the final point cloud.
+
+Depth errors also affect point cloud quality. A small error in the depth map becomes a position error after back-projection. This effect is often more visible near object boundaries, in low-texture regions, and at longer distances. In practical scenes, these errors can create trailing points, unstable edges, and distorted ground structure. For this project, point cloud quality is important because the output is not only for visual display. It is also used as the input for later obstacle understanding and mapping tasks.
+
+
+
+Mthods 
+
+
+This submodule takes a single RGB image from an ESP32 camera and converts it into a PLY point cloud. The point cloud is passed to later team members for point cloud fusion. After fusion, the data will be used for map generation and path planning. My role is the first stage of the whole pipeline, so the quality of this point cloud affects all later stages.
+
+At first, I tested the relative depth output from Depth Anything V2. That type of depth was difficult to use in this project. Near regions had larger values and far regions had smaller values. The output preserved depth order, but it was hard to build a stable mathematical relationship between those values and real distances in the physical scene. Because of this problem, it was not suitable for point cloud reconstruction that needed practical geometric meaning.
+
+The final method uses Depth Pro because it gives depth output that is closer to actual distance. The depth map is converted into a point cloud by back-projection with the calibrated camera intrinsics. The intrinsic parameters were obtained from about 30 checkerboard images taken from different angles. In the reconstruction step, Z is treated as depth. X and Y are calculated from pixel position and focal length.
+
+No extra global scale correction is applied in the final pipeline. This is because the method aims to preserve the direct geometric output of the selected model and calibrated camera system. The output point cloud is saved in PLY format so that it can be used directly by the next team member.
+
+Several post-processing steps are applied after point cloud generation. First, only the foreground shell is kept. This is used to remove trailing scattered points around object boundaries. These trailing points can make the object shape unclear and can reduce the usefulness of the point cloud for later fusion. Second, the floor is extended from the nearest visible cross-section back to the origin. This helps the later map-generation step by making the near-ground region more complete. Third, a 12 cm by 12 cm square floor patch is added at the origin. This gives the later path-planning stage a small free region for motion.
+
+The model runs on a GPU. The initial model loading takes about 40 seconds. The first captured image takes about 15 seconds because the system still needs to initialise the model. After that, later images are processed in about 1.5 seconds each. The final setup is biased toward speed, because half precision is enabled and this gives a large improvement in runtime while keeping the output usable for the project.
+
+
+
+
+
+
+
+
