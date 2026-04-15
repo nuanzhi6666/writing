@@ -1,0 +1,49 @@
+Theoretical Background of Monocular Depth-Based Point Cloud Reconstruction
+
+This work is based on monocular depth estimation and camera projection geometry. The aim of this submodule is to generate a usable point cloud from a single RGB image. This point cloud is used later for fusion, mapping, and path planning.
+
+Monocular depth estimation predicts scene depth from one image [1]. A single RGB image only shows the 2D appearance of a scene. It shows colour, brightness, texture, edges, and object shape. It does not directly show real 3D distance. The depth of each pixel must therefore be inferred from visual cues. These cues include perspective, occlusion, scale, texture change, and object structure. This makes the task difficult. Different 3D scenes can produce similar 2D images. Even so, monocular depth estimation is useful for low-cost robotic systems because it only needs one camera [1].
+
+An important idea in this area is the difference between relative depth and metric depth. Relative depth mainly shows depth order. It can show which parts are closer and which parts are farther away. However, the values do not necessarily match real physical distance. Metric depth tries to produce values that are more consistent with real scene geometry. Recent depth models such as Depth Anything V2 and Depth Pro show this difference clearly [2], [3]. This difference matters in this project because the depth map is not the final output. It must be converted into a point cloud and passed to later modules. If the depth is only correct in a relative sense, the point cloud may still have wrong scale and wrong distance. This reduces its value for later geometric processing.
+
+The conversion from a depth map to a point cloud is based on the pinhole camera model [4]. This model describes how a 3D scene is projected onto a 2D image plane. In this model, each image pixel corresponds to a ray that starts at the camera centre and passes through the image plane. If the depth of a pixel is known, the 3D position of that point can be recovered along the ray. This is why depth estimation and camera geometry must be considered together. The camera intrinsics describe how image coordinates relate to directions in 3D space. These intrinsics include the focal lengths in the horizontal and vertical directions, written as fx and fy, and the principal point, written as (cx, cy).
+
+Let (u, v) be the image coordinates of a pixel. Let Z be its depth. If the focal lengths are fx and fy, and the principal point is (cx, cy), then the corresponding 3D point (X, Y, Z) can be written as:
+X = ((u - cx) Z) / fx
+Y = ((v - cy) Z) / fy
+Z = Z
+These equations describe back-projection. The term (u - cx) gives the horizontal offset from the optical centre. The term (v - cy) gives the vertical offset. Dividing by focal length converts image offsets into normalised camera coordinates. Multiplying by Z places the point at the correct distance in 3D space. In this way, the depth value controls how far the point is from the camera, and the pixel position controls its lateral position. This step is the main mathematical link between the depth map and the final point cloud.
+
+The quality of the reconstructed point cloud also depends on camera calibration [5]. A real camera does not perfectly follow the ideal pinhole model. Lens distortion changes the relationship between image position and the true viewing ray. If the intrinsic parameters are inaccurate, or if distortion is not handled properly, the reconstructed 3D points will contain systematic geometric error. This means that even if the depth prediction is reasonable, the final point cloud may still show wrong shape, wrong position, or wrong scale. For this reason, calibration is important for improving geometric consistency in single-image point cloud reconstruction.
+
+
+Methods for Single-Image Point Cloud Reconstruction
+
+This submodule converts a single RGB image into a coloured PLY point cloud. The point cloud is then passed to the next team member for point cloud fusion. After that, later stages use the fused result for map generation and path planning. My role is the first stage of this pipeline. The main aim is to produce a point cloud that is geometrically usable for later processing.
+
+The input is a single JPG image with a resolution of 1024 x 768. The system processes one image at a time. A new image is captured and then processed directly. Before depth inference, the image is rotated by 180 degrees. This is done because the camera is mounted upside down during image capture. The output of the submodule is one coloured PLY file for each input image.
+
+During early development, a relative-depth model based on Depth Anything V2 was tested [2]. This model could preserve near-far order in the scene. However, it was difficult to use for this project because the depth values could not be linked to real-world distance in a stable mathematical way. For this reason, the final method did not use the relative-depth approach as the main solution.
+
+The final system uses Depth Pro for depth estimation [3]. It was selected because its metric depth output was more suitable for practical distance recovery and point cloud reconstruction in this project. After depth prediction, the depth map is converted into a 3D point cloud by back-projection with calibrated camera intrinsics. At a resolution of 1024 x 768, the calibrated intrinsic parameters were fx = 1180.50, fy = 1184.63, cx = 522.11, and cy = 394.13. In the reconstruction step, Z is treated as the depth value. The X and Y coordinates are computed from pixel position and focal length. Each reconstructed point keeps its RGB colour. The result is exported as a coloured PLY file.
+
+Camera calibration was carried out using a checkerboard-based approach that follows the general calibration framework proposed by Zhang [5]. The intrinsic parameters were estimated from 30 checkerboard images captured from different viewing angles. The final calibration gave an OpenCV RMS value of 0.542 and a mean reprojection error of 0.459 pixels. These results were considered sufficient for the geometric reconstruction stage.
+
+Several post-processing steps are applied after point cloud generation. First, the floor is extended from the nearest visible cross-section back to the origin. This is done to make the near-ground region more complete for the later mapping stage. Second, a virtual square floor patch of 12 cm x 12 cm is added at the origin. This gives the later path-planning stage a small free region for movement. Third, only the foreground shell is kept. This step uses depth discontinuity to detect strong depth changes and remove the transition band between foreground objects and background structure. The purpose is to reduce trailing scattered points around object edges and to keep the object outline clearer for later fusion.
+
+The model runs on a GPU. Half-precision inference is enabled to improve speed. Initial model loading takes about 40 seconds. The first image takes about 15 seconds. After that, each later image is processed in about 1.5 seconds. The final setup therefore favours runtime speed while still keeping point cloud quality at a level that is useful for later stages.
+
+The output is evaluated by comparing measurements taken in CloudCompare with real measurements from the physical scene. The main criteria are depth error, contour clarity, and visible shape distortion. In addition, the point cloud is judged by whether it is suitable for later point cloud fusion. A better result is one that gives smaller distance error, clearer object boundaries, and less unwanted deformation.
+
+
+References
+
+[1] C. Godard, O. Mac Aodha, M. Firman, and G. J. Brostow, “Digging Into Self-Supervised Monocular Depth Estimation,” in Proc. IEEE/CVF International Conference on Computer Vision (ICCV), 2019, pp. 3827-3837.
+
+[2] L. Yang, B. Kang, Z. Huang, Z. Zhao, X. Xu, J. Feng, and H. Zhao, “Depth Anything V2,” arXiv preprint arXiv:2406.09414, 2024.
+
+[3] A. Bochkovskii, A. Delaunoy, H. Germain, M. Santos, Y. Zhou, S. R. Richter, and V. Koltun, “Depth Pro: Sharp Monocular Metric Depth in Less Than a Second,” arXiv preprint arXiv:2410.02073, 2024.
+
+[4] R. Hartley and A. Zisserman, Multiple View Geometry in Computer Vision, 2nd ed. Cambridge, U.K.: Cambridge University Press, 2004.
+
+[5] Z. Zhang, “A Flexible New Technique for Camera Calibration,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 22, no. 11, pp. 1330-1334, 2000.
