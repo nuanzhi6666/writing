@@ -1,0 +1,174 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{caption}
+
+\title{final report}
+\author{JUN JIE OU YANG}
+\date{April 2026}
+
+\begin{document}
+
+\maketitle
+\section{Introduction}
+
+In recent years, advances in computing power and robotics have made it increasingly practical to use low-cost vision systems for environmental scanning, spatial reconstruction, and autonomous navigation. For indoor mobile robots, the challenge is not only to perceive the geometry of the surrounding environment, but also to convert that information into a map representation that can support path planning. As a result, a usable navigation system is rarely just a single algorithm. It is usually a complete processing chain that begins with image acquisition and continues through 3D reconstruction, scene fusion, map generation, and path planning.
+
+This project targets low-cost indoor visual navigation and proposes a system based on multi-robot collaborative scanning with centralized processing on a host computer. The current setup uses three robots to share the visual scanning task. They collect images and pose-related information from different viewpoints, while the host computer performs the main computation. Compared with scanning the environment region by region using a single robot, this approach can cover a larger area in less time. At the same time, concentrating the heavy computation on the host computer avoids the need to equip every robot with high-performance AI hardware, which helps reduce the overall system cost.
+
+From a system perspective, the project consists of four connected stages. First, the onboard camera captures a single RGB image and sends it to the host computer. Second, the image is processed by a depth estimation model and converted into a coloured point cloud, which provides a 3D representation from a single viewpoint. Third, point clouds collected from different robots and different viewpoints are merged to form a more complete global point cloud. Finally, the fused global point cloud is converted into a 2D map, which is used to identify traversable regions, blocked regions, and unknown areas, and to support the path planning module in generating motion paths and control commands.
+
+The main challenge of this project is not simply to complete one isolated module, but to build a complete system chain from images to point clouds, from point clouds to maps, and from maps to path planning under the constraints of low-cost hardware, limited computing resources, and real indoor environments. The point clouds produced at the front end must be geometrically consistent enough to support later fusion, while the fused result must also be reduced into a 2D map that is suitable for navigation. For this reason, the project focuses more on the continuity, stability, and practical usability of the whole system than on the local performance of any single module.
+\section{Theoretical Background}
+
+This work is based on monocular depth estimation and camera projection geometry. The aim of this submodule is to recover a usable point cloud from a single RGB image. This is important because the point cloud is later used for fusion, mapping, and path planning in the full team system.
+
+Monocular depth estimation predicts scene depth from one image \cite{godard2019}. A single RGB image only records the 2D appearance of a scene. It contains colour, brightness, texture, edges, and object shapes, but it does not directly provide real 3D distance. In other words, the image shows how the scene looks on the image plane, not how far each point is from the camera in physical space. The depth of each pixel must therefore be inferred from visual cues such as perspective, occlusion, scale, texture variation, and object structure. For example, objects that appear smaller may be farther away, and strong perspective lines may suggest depth change across a surface. However, these cues are indirect, so the problem is difficult and often ambiguous. Different real 3D scenes can produce similar 2D image patterns. Even so, monocular depth estimation is attractive for low-cost robotic systems because it only requires one camera. This reduces hardware cost, weight, and system complexity.
+
+A key idea in this area is the difference between relative depth and metric depth. Relative depth mainly describes the order of depth in a scene. It can show which parts are closer and which parts are farther away, but the numerical values do not necessarily match real physical distance. Metric depth, by contrast, tries to produce values that are more consistent with true scene geometry. Recent monocular depth models such as Depth Anything V2 and Depth Pro reflect this broader move toward stronger generalisation and more practical geometric output \cite{yang2024,bochkovskii2024}. For this project, this distinction is important because the depth map is not the final result. It must be converted into a point cloud and then passed to later modules. If the depth is only correct in a relative sense, the reconstructed point cloud may still have incorrect scale and distance even if the shape looks visually reasonable. This would reduce its value for later geometric processing such as point cloud fusion and map construction.
+
+The conversion from a depth map to a point cloud is based on the pinhole camera model \cite{hartley2004}. This model describes how a 3D scene is projected onto a 2D image plane through a camera. In this model, each image pixel corresponds to a ray that starts at the camera centre and passes through the image plane. If the depth value of a pixel is known, the 3D position of the corresponding scene point can be recovered along that ray. This is why depth estimation and camera geometry must be considered together. The basic geometry of the pinhole camera model is illustrated in Fig.~\ref{fig:camera_model}. The camera intrinsics define how image coordinates relate to directions in 3D space. These intrinsics include the focal lengths in the horizontal and vertical directions, denoted by $f_x$ and $f_y$, and the principal point, denoted by $(c_x,c_y)$, which represents the optical centre of the image.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.72\textwidth]{camera.png}
+    \caption{Geometry of the pinhole camera model.}
+    \label{fig:camera_model}
+\end{figure}
+
+Let $(u,v)$ be the image coordinates of a pixel and let $Z$ be its depth. If the focal lengths are $f_x$ and $f_y$, and the principal point is $(c_x,c_y)$, the corresponding 3D point $(X,Y,Z)$ in the camera coordinate system can be written as
+\[
+X = \frac{(u-c_x)Z}{f_x}, \qquad
+Y = \frac{(v-c_y)Z}{f_y}, \qquad
+Z = Z.
+\]
+These equations describe the back-projection process. The term $(u-c_x)$ gives the horizontal offset of the pixel from the optical centre, and $(v-c_y)$ gives the vertical offset. Dividing by focal length converts these image offsets into normalised camera coordinates. Multiplying by $Z$ then scales the point to its position in 3D space. In this way, the depth value controls how far the point lies from the camera, while the pixel position determines its lateral location. This back-projection step is the main mathematical link between the depth map and the final point cloud.
+
+The quality of the reconstructed point cloud also depends on camera calibration \cite{zhang2000}. A real camera does not perfectly follow the ideal pinhole model. Lens distortion changes the relationship between image position and the true viewing ray. If the intrinsic parameters are inaccurate, or if distortion is not handled properly, the reconstructed 3D points will contain systematic geometric error. This means that even if the depth prediction is reasonable, the final point cloud may still show incorrect shape, position, or scale. For this reason, calibration is important for improving geometric consistency in single-image point cloud reconstruction.
+
+
+\section{Methods}
+
+This submodule converts a single RGB image into a coloured PLY point cloud. The point cloud is then passed to the next team member for point cloud fusion. After that, later stages of the project use the fused result for map generation and path planning. My role is the first stage of this pipeline, so the main aim of the method is to produce a point cloud that is geometrically usable for later processing. An overview of the full processing pipeline is shown in Fig.~\ref{fig:pipeline}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{pipeline.png}
+    \caption{Overview of the single-image point cloud reconstruction pipeline.}
+    \label{fig:pipeline}
+\end{figure}
+
+The input is a single JPG image with a resolution of 1024 $\times$ 768. The system processes one image at a time. A new image is captured and then processed directly. Before depth inference, the image is rotated by 180 degrees. This is done because the camera is mounted upside down during image capture. The output of the submodule is one coloured PLY file for each input image.
+
+During early development, a relative-depth model based on Depth Anything V2 was tested \cite{yang2024}. This model could preserve near--far order in the scene, but it was difficult to use for this project because the depth values could not be linked to real-world distance in a stable mathematical way. For this reason, the final method did not use the relative-depth approach as the main solution.
+
+The final system uses Depth Pro for depth estimation \cite{bochkovskii2024}. It was selected because its metric depth output was more suitable for practical distance recovery and point cloud reconstruction in this project. After depth prediction, the depth map is converted into a 3D point cloud by back-projection with calibrated camera intrinsics. At a resolution of 1024 $\times$ 768, the calibrated intrinsic parameters were $f_x = 1180.50$, $f_y = 1184.63$, $c_x = 522.11$, and $c_y = 394.13$. In the reconstruction step, $Z$ is treated as the depth value. The $X$ and $Y$ coordinates are computed from pixel position and focal length. Each reconstructed point keeps its RGB colour, and the result is exported as a coloured PLY file.
+
+Camera calibration was carried out using a checkerboard-based approach following the general calibration framework proposed by Zhang \cite{zhang2000}. The intrinsic parameters were estimated from 30 checkerboard images captured from different viewing angles. The final calibration gave an OpenCV RMS value of 0.542 and a mean reprojection error of 0.459 pixels. These results were considered sufficient for the geometric reconstruction stage.
+
+Several post-processing steps are applied after point cloud generation. First, the floor is extended from the nearest visible cross-section back to the origin. This is done to make the near-ground region more complete for the later mapping stage. Second, a virtual square floor patch of 12 cm $\times$ 12 cm is added at the origin. This gives the later path-planning stage a small free region for movement. Third, only the foreground shell is kept. This step uses depth discontinuity to detect strong depth changes and remove the transition band between foreground objects and background structure.
+
+A representative depth map is shown in Fig.~\ref{fig:depth_jump}. In this example, the front box appears as a clear depth region against the surrounding surface. The shell-preservation step uses the depth jump around the box boundary to identify the foreground region and suppress the transition points near the object edge. This helps reduce trailing scattered points and keeps the object outline clearer for later fusion. The visual effect of this post-processing is shown in Fig.~\ref{fig:before_after}. Compared with the original output, the processed result contains a cleaner object boundary and fewer trailing points.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.68\textwidth]{depth.png}
+    \caption{Depth map used to identify depth discontinuities around the foreground box.}
+    \label{fig:depth_jump}
+\end{figure}
+
+\begin{figure}[htbp] \centering \includegraphics[width=0.9\textwidth,height=3cm]{before.png} \caption*{(a) Before} \vspace{0.8em} \includegraphics[width=0.9\textwidth,height=3cm]{after.png} \caption*{(b) After} \caption{Visual comparison before and after post-processing.} \label{fig:before_after} \end{figure}
+
+The model runs on a GPU. Half-precision inference is enabled to improve speed. Initial model loading takes about 40 seconds. The first image takes about 15 seconds. After that, each later image is processed in about 1.5 seconds. The final setup therefore favours runtime speed, while still keeping point cloud quality at a level that is useful for later stages.
+
+The output is evaluated by comparing measurements taken in CloudCompare with real measurements from the physical scene. The main criteria are distance error, contour clarity, and visible shape distortion. In addition, the point cloud is judged by whether it is suitable for later point cloud fusion.
+
+In this evaluation, all tested distances are based on the same target object, which is the small box placed in front of the camera. The measured distance refers to the distance between the camera and the front surface of the box. Table~\ref{tab:distance_accuracy} shows the comparison between the real measured distances and the corresponding point cloud measurements for this box at different positions. A visual example of the measurement is shown in Fig.~\ref{fig:accuracy_eval}.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Comparison between real measured distances and point cloud measurements for the front surface of the box.}
+    \label{tab:distance_accuracy}
+    \begin{tabular}{|c|c|c|}
+        \hline
+        Real distance (cm) & Point cloud distance (cm) & Absolute error (cm) \\
+        \hline
+        30  & 34  & 4  \\
+        40  & 42  & 2  \\
+        50  & 52  & 2  \\
+        60  & 61  & 1  \\
+        70  & 74  & 4  \\
+        80  & 88  & 8  \\
+        90  & 100 & 10 \\
+        100 & 111 & 11 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[t]{0.48\textwidth}
+        \vspace{0pt}
+        \centering
+        \includegraphics[height=5cm,keepaspectratio]{point50.png}
+        \caption{Point cloud measurement of the box front surface at about 52\,cm.}
+        \label{fig:point50}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.48\textwidth}
+        \vspace{0pt}
+        \centering
+        \includegraphics[height=5cm,keepaspectratio]{real50.png}
+        \caption{Real scene measurement of the box front surface at 50\,cm.}
+        \label{fig:real50}
+    \end{subfigure}
+    \caption{Distance evaluation for the box front surface.}
+    \label{fig:accuracy_eval}
+\end{figure}
+
+As shown in Table~\ref{tab:distance_accuracy}, the point cloud is more accurate at shorter distances. From 30\,cm to 70\,cm, the error stays relatively small. In this range, the absolute error is between 1\,cm and 4\,cm. This means that the reconstructed point positions are still close to the real scene positions. However, the error becomes larger when the distance increases. At 80\,cm, the error rises to 8\,cm. At 90\,cm, it increases to 10\,cm. At 100\,cm, it reaches 11\,cm. This shows a clear overall trend. The farther the box is from the camera, the less accurate the reconstruction becomes.
+
+Another important point is that the point cloud distance is larger than the real distance at every tested position. This means that the reconstruction tends to overestimate distance in this set of measurements. This overestimation is small at short range, but it becomes more obvious at longer range. For example, the difference is only 1\,cm at 60\,cm, but it increases to 11\,cm at 100\,cm. This result suggests that the model output is more reliable in the near field than in the far field.
+
+The 50\,cm case shown in Fig.~\ref{fig:accuracy_eval} is not a separate result. It is one of the measurements already included in Table~\ref{tab:distance_accuracy}. In this case, the real scene distance is 50\,cm, while the point cloud measurement is about 52\,cm. The absolute error is therefore 2\,cm. This matches the overall trend in the table and gives a direct visual example of the evaluation method.
+
+Based on these results, the final point cloud is limited to a working range of 1\,m from the camera. The reason is that the error becomes too large at longer distance. By restricting the effective range, the system can keep better geometric accuracy for later point cloud fusion. A better result is therefore one that gives smaller distance error, clearer object boundaries, and less unwanted deformation within this effective range.
+
+\FloatBarrier
+
+
+
+\begin{thebibliography}{99}
+
+\bibitem{godard2019}
+C.~Godard, O.~Mac Aodha, M.~Firman, and G.~J.~Brostow,
+``Digging Into Self-Supervised Monocular Depth Estimation,''
+in \emph{Proc. IEEE/CVF International Conference on Computer Vision (ICCV)}, 2019, pp.~3827--3837.
+
+\bibitem{yang2024}
+L.~Yang, B.~Kang, Z.~Huang, Z.~Zhao, X.~Xu, J.~Feng, and H.~Zhao,
+``Depth Anything V2,''
+\emph{arXiv preprint arXiv:2406.09414}, 2024.
+
+\bibitem{bochkovskii2024}
+A.~Bochkovskii, A.~Delaunoy, H.~Germain, M.~Santos, Y.~Zhou, S.~R.~Richter, and V.~Koltun,
+``Depth Pro: Sharp Monocular Metric Depth in Less Than a Second,''
+\emph{arXiv preprint arXiv:2410.02073}, 2024.
+
+\bibitem{hartley2004}
+R.~Hartley and A.~Zisserman,
+\emph{Multiple View Geometry in Computer Vision}, 2nd~ed.
+Cambridge, U.K.: Cambridge University Press, 2004.
+
+\bibitem{zhang2000}
+Z.~Zhang,
+``A Flexible New Technique for Camera Calibration,''
+\emph{IEEE Transactions on Pattern Analysis and Machine Intelligence},
+vol.~22, no.~11, pp.~1330--1334, 2000.
+
+\end{thebibliography}
+
+\end{document}
